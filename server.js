@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import express from 'express';
+import cors from 'cors';
 import { authMiddleware } from './auth.js';
 import { enqueue, listJobs, getJob, retryJob, cancelJob, jobExists, getJobCounts } from './queue.js';
 import { getPrinterStatuses } from './printer.js';
@@ -11,15 +12,23 @@ const config = JSON.parse(readFileSync('config.json', 'utf-8'));
 const printerMap = new Map(config.printers.map((p) => [p.printer_id, p]));
 
 const app = express();
+app.use(cors({
+  origin: [
+    'https://dine-staff.bkkboost.com',
+    'https://dine-admin.bkkboost.com',
+    'http://localhost:3000',
+  ],
+}));
 app.use(express.json({ limit: '1mb' }));
 app.use(authMiddleware(config));
 
 // POST /print
 app.post('/print', (req, res) => {
-  const { id, printer_id, escpos_bytes, round_id, restaurant_id } = req.body;
+  const { id, idempotency_key, printer_id, escpos_bytes, round_id, restaurant_id } = req.body;
+  const jobId = id || idempotency_key;
 
-  if (!id || !printer_id || !escpos_bytes) {
-    return res.status(400).json({ error: 'Missing required fields: id, printer_id, escpos_bytes' });
+  if (!jobId || !printer_id || !escpos_bytes) {
+    return res.status(400).json({ error: 'Missing required fields: id (or idempotency_key), printer_id, escpos_bytes' });
   }
 
   const printer = printerMap.get(printer_id);
@@ -27,12 +36,12 @@ app.post('/print', (req, res) => {
     return res.status(400).json({ error: `Unknown printer_id: ${printer_id}` });
   }
 
-  if (jobExists(id)) {
-    return res.status(409).json({ error: 'Job already exists', jobId: id });
+  if (jobExists(jobId)) {
+    return res.status(409).json({ error: 'Job already exists', jobId });
   }
 
   enqueue({
-    id,
+    id: jobId,
     printer_id,
     usb_path: printer.usb_path,
     escpos_bytes,
@@ -40,8 +49,8 @@ app.post('/print', (req, res) => {
     restaurant_id,
   });
 
-  logger.info(`Job ${id} queued for printer ${printer.name} (${printer.usb_path})`);
-  res.status(202).json({ jobId: id, status: 'queued' });
+  logger.info(`Job ${jobId} queued for printer ${printer.name} (${printer.usb_path})`);
+  res.status(202).json({ jobId, status: 'queued' });
 });
 
 // GET /jobs

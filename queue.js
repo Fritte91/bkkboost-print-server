@@ -88,18 +88,27 @@ export function markDone(id) {
 
 export function markFailed(id, error) {
   const job = stmts.getJob.get(id);
-  if (!job) return;
+  if (!job) return null;
 
   const attempt = job.attempts; // 0-indexed before increment
+  const isDead = job.attempts + 1 >= job.max_attempts;
   const delay = RETRY_DELAYS[Math.min(attempt, RETRY_DELAYS.length - 1)];
-  const nextRetry = job.attempts + 1 >= job.max_attempts ? null : Date.now() + delay;
+  const nextRetry = isDead ? null : Date.now() + delay;
 
-  return stmts.markFailed.run({
+  stmts.markFailed.run({
     id,
     error: String(error),
     next_retry_at: nextRetry,
     updated_at: Date.now(),
   });
+
+  return {
+    isDead,
+    attempts: job.attempts + 1,
+    round_id: job.round_id,
+    printer_id: job.printer_id,
+    restaurant_id: job.restaurant_id,
+  };
 }
 
 export function listJobs(filters = {}) {
