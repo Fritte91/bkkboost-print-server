@@ -1,0 +1,17 @@
+{
+  "name": "bkkboost-print-server",
+  "version": "1.0.0",
+  "description": "Lightweight HTTP print server for USB thermal printers",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "install-service": "sudo cp systemd/bkkboost-print.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable bkkboost-print"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "express": "^4.21.0"
+  }
+}

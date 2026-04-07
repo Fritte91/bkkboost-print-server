@@ -1,0 +1,10 @@
+{
+  "auth_token": "change-me",
+  "restaurant_id": "uuid-here",
+  "health_callback_url": "https://dine-staff.bkkboost.com/api/print/health",
+  "printers": [
+    { "printer_id": "uuid", "name": "Kitchen 1", "usb_path": "/dev/usb/lp0" },
+    { "printer_id": "uuid", "name": "Kitchen 2", "usb_path": "/dev/usb/lp1" },
+    { "printer_id": "uuid", "name": "Receipt",   "usb_path": "/dev/usb/lp2" }
+  ]
+}

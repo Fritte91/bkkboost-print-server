@@ -1,0 +1,17 @@
+[Unit]
+Description=BKKBoost Print Server
+After=network.target
+
+[Service]
+Type=simple
+User=bkkboost
+WorkingDirectory=/home/bkkboost/bkkboost-print-server
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bkkboost-print
+
+[Install]
+WantedBy=multi-user.target

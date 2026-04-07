@@ -1,0 +1,17 @@
+[Unit]
+Description=Cloudflare Tunnel for BKKBoost Print Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bkkboost
+ExecStart=/usr/local/bin/cloudflared tunnel run bkkboost-print
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cloudflared-bkkboost
+
+[Install]
+WantedBy=multi-user.target
