@@ -37,7 +37,7 @@ const stmts = {
 
   cancelJob: db.prepare(`
     UPDATE print_jobs SET status = 'dead', updated_at = ?
-    WHERE id = ? AND status = 'queued'
+    WHERE id = ? AND status IN ('queued', 'dead')
   `),
 
   markFailed: db.prepare(`
@@ -56,6 +56,10 @@ const stmts = {
 
   countByStatus: db.prepare(`
     SELECT status, COUNT(*) as count FROM print_jobs GROUP BY status
+  `),
+
+  deadJobsForPrinter: db.prepare(`
+    SELECT id FROM print_jobs WHERE usb_path = ? AND status = 'dead'
   `),
 };
 
@@ -90,7 +94,7 @@ export function markFailed(id, error) {
   const job = stmts.getJob.get(id);
   if (!job) return null;
 
-  const attempt = job.attempts; // 0-indexed before increment
+  const attempt = job.attempts;
   const isDead = job.attempts + 1 >= job.max_attempts;
   const delay = RETRY_DELAYS[Math.min(attempt, RETRY_DELAYS.length - 1)];
   const nextRetry = isDead ? null : Date.now() + delay;
@@ -116,8 +120,9 @@ export function listJobs(filters = {}) {
   const params = [];
 
   if (filters.status) {
-    sql += ' AND status = ?';
-    params.push(filters.status);
+    const statuses = Array.isArray(filters.status) ? filters.status : [filters.status];
+    sql += ` AND status IN (${statuses.map(() => '?').join(',')})`;
+    params.push(...statuses);
   }
   if (filters.printer_id) {
     sql += ' AND printer_id = ?';
@@ -131,7 +136,6 @@ export function listJobs(filters = {}) {
 export function getJob(id) {
   const job = stmts.getJob.get(id);
   if (!job) return null;
-  // Exclude escpos_bytes from response
   const { escpos_bytes, ...rest } = job;
   return rest;
 }
@@ -146,7 +150,7 @@ export function retryJob(id) {
 export function cancelJob(id) {
   const job = stmts.getJob.get(id);
   if (!job) return { found: false };
-  if (job.status !== 'queued') return { found: true, cancellable: false };
+  if (job.status !== 'queued' && job.status !== 'dead') return { found: true, cancellable: false };
   stmts.cancelJob.run(Date.now(), id);
   return { found: true, cancellable: true };
 }
@@ -162,6 +166,48 @@ export function getJobCounts() {
     counts[row.status] = row.count;
   }
   return counts;
+}
+
+export function listJobsForLogs(filters = {}) {
+  const conditions = ['1=1'];
+  const params = [];
+
+  if (filters.status) {
+    conditions.push('status = ?');
+    params.push(filters.status);
+  }
+  if (filters.printer_id) {
+    conditions.push('printer_id = ?');
+    params.push(filters.printer_id);
+  }
+  if (filters.from) {
+    conditions.push('created_at >= ?');
+    params.push(filters.from);
+  }
+  if (filters.to) {
+    conditions.push('created_at <= ?');
+    params.push(filters.to);
+  }
+
+  const where = conditions.join(' AND ');
+
+  const total = db.prepare(`SELECT COUNT(*) as count FROM print_jobs WHERE ${where}`).get(...params).count;
+
+  const limit = Math.min(Math.max(filters.limit || 100, 1), 500);
+  const offset = Math.max(filters.offset || 0, 0);
+
+  const jobs = db.prepare(
+    `SELECT id, printer_id, usb_path, status, attempts, max_attempts, error, round_id, restaurant_id, created_at, updated_at, next_retry_at
+     FROM print_jobs WHERE ${where}
+     ORDER BY created_at DESC
+     LIMIT ? OFFSET ?`
+  ).all(...params, limit, offset);
+
+  return { total, limit, offset, jobs };
+}
+
+export function listDeadJobsForPrinter(usbPath) {
+  return stmts.deadJobsForPrinter.all(usbPath);
 }
 
 export function jobExists(id) {

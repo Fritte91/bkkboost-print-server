@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import express from 'express';
 import cors from 'cors';
 import { authMiddleware } from './auth.js';
-import { enqueue, listJobs, getJob, retryJob, cancelJob, jobExists, getJobCounts } from './queue.js';
+import { enqueue, listJobs, getJob, retryJob, cancelJob, jobExists, getJobCounts, listJobsForLogs } from './queue.js';
 import { getPrinterStatuses } from './printer.js';
 import { startScheduler } from './scheduler.js';
 import logger from './logger.js';
@@ -153,7 +153,7 @@ app.post('/jobs/:id/retry', (req, res) => {
 app.delete('/jobs/:id', (req, res) => {
   const result = cancelJob(req.params.id);
   if (!result.found) return res.status(404).json({ error: 'Job not found' });
-  if (!result.cancellable) return res.status(400).json({ error: 'Job is not cancellable (not in queued state)' });
+  if (!result.cancellable) return res.status(400).json({ error: 'Job is not cancellable (must be queued or dead)' });
   logger.info(`Job ${req.params.id} cancelled`);
   res.json({ cancelled: true });
 });
@@ -162,6 +162,20 @@ app.delete('/jobs/:id', (req, res) => {
 app.get('/printers', async (req, res) => {
   const statuses = await getPrinterStatuses(config.printers);
   res.json(statuses);
+});
+
+// GET /logs
+app.get('/logs', (req, res) => {
+  const { status, printer_id, limit, offset, from, to } = req.query;
+  const result = listJobsForLogs({
+    status,
+    printer_id,
+    limit: limit ? parseInt(limit, 10) : undefined,
+    offset: offset ? parseInt(offset, 10) : undefined,
+    from: from ? parseInt(from, 10) : undefined,
+    to: to ? parseInt(to, 10) : undefined,
+  });
+  res.json(result);
 });
 
 // GET /health

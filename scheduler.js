@@ -1,8 +1,8 @@
-import { getNextReady, markPrinting, markDone, markFailed, resetInterruptedJobs } from './queue.js';
+import { getNextReady, markPrinting, markDone, markFailed, resetInterruptedJobs, listDeadJobsForPrinter, retryJob } from './queue.js';
 import { writeToPrinter, isPrinterConnected, getPrinterStatuses } from './printer.js';
 import logger from './logger.js';
 
-let lastStatuses = null;
+const lastConnected = new Map(); // usb_path → boolean
 let _config = null;
 
 export function startScheduler(config) {
@@ -67,9 +67,29 @@ async function healthCheck(config) {
   try {
     const statuses = await getPrinterStatuses(config.printers);
 
-    const statusKey = JSON.stringify(statuses.map((s) => s.connected));
-    if (lastStatuses === statusKey) return;
-    lastStatuses = statusKey;
+    // Detect changes
+    let changed = false;
+    for (const s of statuses) {
+      const prev = lastConnected.get(s.usb_path);
+      if (prev !== s.connected) {
+        changed = true;
+
+        // Reconnected — retry dead jobs for this printer
+        if (prev === false && s.connected) {
+          const deadJobs = listDeadJobsForPrinter(s.usb_path);
+          if (deadJobs.length > 0) {
+            for (const job of deadJobs) {
+              retryJob(job.id);
+            }
+            logger.info(`Printer ${s.name} reconnected — retrying ${deadJobs.length} dead job(s)`);
+          }
+        }
+
+        lastConnected.set(s.usb_path, s.connected);
+      }
+    }
+
+    if (!changed) return;
 
     logger.info(`Printer status change: ${statuses.map((s) => `${s.name}=${s.connected ? 'connected' : 'disconnected'}`).join(', ')}`);
 
