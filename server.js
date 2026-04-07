@@ -53,6 +53,80 @@ app.post('/print', (req, res) => {
   res.status(202).json({ jobId, status: 'queued' });
 });
 
+// POST /print-round
+app.post('/print-round', async (req, res) => {
+  const { round_id, restaurant_id } = req.body;
+
+  if (!round_id) {
+    return res.status(400).json({ error: 'Missing required field: round_id' });
+  }
+
+  if (!config.staff_app_url) {
+    return res.status(500).json({ error: 'staff_app_url not configured on print server' });
+  }
+
+  // Fetch print jobs from the staff app
+  let jobs;
+  try {
+    const staffRes = await fetch(`${config.staff_app_url}/api/print/job/internal`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.auth_token}`,
+      },
+      body: JSON.stringify({ round_id, restaurant_id }),
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!staffRes.ok) {
+      const err = await staffRes.json().catch(() => ({}));
+      logger.error(`Staff app returned ${staffRes.status} for round ${round_id}: ${err.error || 'Unknown error'}`);
+      return res.status(502).json({ error: `Staff app error: ${err.error || staffRes.status}` });
+    }
+
+    const data = await staffRes.json();
+    jobs = data.jobs;
+  } catch (err) {
+    logger.error(`Failed to reach staff app for round ${round_id}: ${err.message}`);
+    return res.status(502).json({ error: `Staff app unreachable: ${err.message}` });
+  }
+
+  if (!Array.isArray(jobs) || jobs.length === 0) {
+    logger.info(`No print jobs returned for round ${round_id}`);
+    return res.status(202).json({ queued: 0 });
+  }
+
+  // Enqueue each job
+  let queued = 0;
+  for (const job of jobs) {
+    const printer = printerMap.get(job.printerId);
+    if (!printer) {
+      logger.warn(`Round ${round_id}: printer_id ${job.printerId} not in config, skipping`);
+      continue;
+    }
+
+    const jobId = job.jobId || crypto.randomUUID();
+
+    if (jobExists(jobId)) {
+      logger.info(`Round ${round_id}: job ${jobId} already exists, skipping`);
+      continue;
+    }
+
+    enqueue({
+      id: jobId,
+      printer_id: job.printerId,
+      usb_path: printer.usb_path,
+      escpos_bytes: job.escposBytes,
+      round_id,
+      restaurant_id,
+    });
+    queued++;
+  }
+
+  logger.info(`Round ${round_id}: ${queued} job(s) queued`);
+  res.status(202).json({ queued });
+});
+
 // GET /jobs
 app.get('/jobs', (req, res) => {
   const { status, printer_id } = req.query;
