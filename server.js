@@ -4,12 +4,50 @@ import cors from 'cors';
 import { authMiddleware } from './auth.js';
 import { enqueue, listJobs, getJob, retryJob, cancelJob, jobExists, getJobCounts, listJobsForLogs } from './queue.js';
 import { getPrinterStatuses } from './printer.js';
-import { startScheduler } from './scheduler.js';
+import { startScheduler, updatePrinters } from './scheduler.js';
 import logger from './logger.js';
 
 const config = JSON.parse(readFileSync('config.json', 'utf-8'));
 
-const printerMap = new Map(config.printers.map((p) => [p.printer_id, p]));
+let printerMap = new Map(config.printers.map((p) => [p.printer_id, p]));
+
+async function fetchPrintersFromSupabase() {
+  if (!config.supabase_url || !config.supabase_service_key) return null;
+
+  const url = `${config.supabase_url}/rest/v1/restaurant_printers?restaurant_id=eq.${config.restaurant_id}&is_active=eq.true&select=id,name,usb_path`;
+  const res = await fetch(url, {
+    headers: {
+      'apikey': config.supabase_service_key,
+      'Authorization': `Bearer ${config.supabase_service_key}`,
+    },
+    signal: AbortSignal.timeout(10000),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Supabase responded with ${res.status}`);
+  }
+
+  const rows = await res.json();
+  return rows.map((r) => ({
+    printer_id: r.id,
+    name: r.name,
+    usb_path: r.usb_path,
+  }));
+}
+
+async function refreshPrinterConfig() {
+  try {
+    const printers = await fetchPrintersFromSupabase();
+    if (!printers) return; // no Supabase configured
+
+    config.printers = printers;
+    printerMap = new Map(printers.map((p) => [p.printer_id, p]));
+    updatePrinters(printers);
+    logger.info(`Printer config refreshed from Supabase: ${printers.length} printer(s)`);
+  } catch (err) {
+    logger.warn(`Failed to fetch printers from Supabase, keeping current config: ${err.message}`);
+  }
+}
 
 const app = express();
 app.use(cors({
@@ -194,7 +232,23 @@ app.get('/health', (req, res) => {
 });
 
 const PORT = config.port || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   logger.info(`Print server listening on port ${PORT}`);
+
+  // Try to load printer config from Supabase before starting the scheduler
+  try {
+    const printers = await fetchPrintersFromSupabase();
+    if (printers) {
+      config.printers = printers;
+      printerMap = new Map(printers.map((p) => [p.printer_id, p]));
+      logger.info(`Loaded ${printers.length} printer(s) from Supabase`);
+    }
+  } catch (err) {
+    logger.warn(`Supabase fetch failed on startup, using config.json printers: ${err.message}`);
+  }
+
   startScheduler(config);
+
+  // Refresh printer config from Supabase every 5 minutes
+  setInterval(refreshPrinterConfig, 5 * 60 * 1000);
 });

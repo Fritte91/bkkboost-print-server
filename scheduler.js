@@ -4,6 +4,7 @@ import logger from './logger.js';
 
 const lastConnected = new Map(); // usb_path → boolean
 let _config = null;
+const printerIntervals = []; // track per-printer intervals so we can replace them
 
 export function startScheduler(config) {
   _config = config;
@@ -13,12 +14,30 @@ export function startScheduler(config) {
   }
 
   for (const printer of config.printers) {
-    setInterval(() => processPrinter(printer), 1000);
+    printerIntervals.push(setInterval(() => processPrinter(printer), 1000));
   }
 
-  setInterval(() => healthCheck(config), 10_000);
+  setInterval(() => healthCheck(_config), 10_000);
 
   logger.info(`Scheduler started for ${config.printers.length} printer(s)`);
+}
+
+export function updatePrinters(printers) {
+  // Clear existing printer intervals
+  for (const id of printerIntervals) {
+    clearInterval(id);
+  }
+  printerIntervals.length = 0;
+
+  // Update config reference
+  _config.printers = printers;
+
+  // Start new intervals
+  for (const printer of printers) {
+    printerIntervals.push(setInterval(() => processPrinter(printer), 1000));
+  }
+
+  logger.info(`Printer list updated: ${printers.length} printer(s) — ${printers.map((p) => p.name).join(', ')}`);
 }
 
 async function processPrinter(printer) {

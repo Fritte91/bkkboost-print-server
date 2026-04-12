@@ -1,6 +1,8 @@
 {
   "auth_token": "change-me",
   "restaurant_id": "uuid-here",
+  "supabase_url": "https://your-project.supabase.co",
+  "supabase_service_key": "your-service-role-key",
   "health_callback_url": "https://dine-staff.bkkboost.com/api/print/health",
   "staff_app_url": "https://dine-staff.bkkboost.com",
   "status_callback_url": "https://dine-staff.bkkboost.com/api/print/job/callback",
