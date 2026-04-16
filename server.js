@@ -55,6 +55,7 @@ app.use(cors({
     'https://dine-staff.bkkboost.com',
     'https://dine-admin.bkkboost.com',
     'http://localhost:3000',
+    'https://localhost',
   ],
 }));
 app.use(express.json({ limit: '1mb' }));
