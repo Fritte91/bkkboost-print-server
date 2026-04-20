@@ -71,11 +71,19 @@ app.use(authMiddleware(config));
 
 // POST /print
 app.post('/print', (req, res) => {
-  const { id, idempotency_key, printer_id, escpos_bytes, round_id, restaurant_id } = req.body;
+  const { id, idempotency_key, printer_id, escpos_bytes, round_id, restaurant_id, session_id, job_type } = req.body;
   const jobId = id || idempotency_key;
 
   if (!jobId || !printer_id || !escpos_bytes) {
     return res.status(400).json({ error: 'Missing required fields: id (or idempotency_key), printer_id, escpos_bytes' });
+  }
+
+  if (job_type !== undefined && job_type !== 'kitchen' && job_type !== 'receipt') {
+    return res.status(400).json({ error: `Invalid job_type: ${job_type}. Must be 'kitchen' or 'receipt' or omitted.` });
+  }
+
+  if (session_id !== undefined && session_id !== null && typeof session_id !== 'string') {
+    return res.status(400).json({ error: 'session_id must be a string UUID or null' });
   }
 
   const printer = printerMap.get(printer_id);
@@ -94,6 +102,8 @@ app.post('/print', (req, res) => {
     escpos_bytes,
     round_id,
     restaurant_id,
+    session_id,
+    job_type,
   });
 
   logger.info(`Job ${jobId} queued for printer ${printer.name} (${printer.usb_path})`);

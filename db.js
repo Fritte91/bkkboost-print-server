@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
+import logger from './logger.js';
 
 const DATA_DIR = path.resolve('data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -32,5 +33,26 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_jobs_usb_path ON print_jobs(usb_path, status);
   CREATE INDEX IF NOT EXISTS idx_jobs_printer_id ON print_jobs(printer_id);
 `);
+
+// Conditional schema additions — safe to re-run.
+// SQLite doesn't support ALTER TABLE ... ADD COLUMN IF NOT EXISTS.
+const existingCols = db.prepare("PRAGMA table_info(print_jobs)").all().map((c) => c.name);
+
+if (!existingCols.includes('job_type')) {
+  db.exec("ALTER TABLE print_jobs ADD COLUMN job_type TEXT");
+  logger.info('[db] Added column print_jobs.job_type');
+}
+
+if (!existingCols.includes('session_id')) {
+  db.exec("ALTER TABLE print_jobs ADD COLUMN session_id TEXT");
+  logger.info('[db] Added column print_jobs.session_id');
+}
+
+try {
+  db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_session_id ON print_jobs(session_id) WHERE session_id IS NOT NULL");
+} catch (err) {
+  logger.warn(`[db] Partial index unsupported (${err.message}); falling back to full index`);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_session_id ON print_jobs(session_id)");
+}
 
 export default db;

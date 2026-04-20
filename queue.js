@@ -6,10 +6,10 @@ const stmts = {
   enqueue: db.prepare(`
     INSERT OR IGNORE INTO print_jobs
       (id, printer_id, usb_path, escpos_bytes, status, attempts, max_attempts,
-       round_id, restaurant_id, created_at, updated_at)
+       round_id, restaurant_id, session_id, job_type, created_at, updated_at)
     VALUES
       (@id, @printer_id, @usb_path, @escpos_bytes, 'queued', 0, @max_attempts,
-       @round_id, @restaurant_id, @created_at, @updated_at)
+       @round_id, @restaurant_id, @session_id, @job_type, @created_at, @updated_at)
   `),
 
   getNextReady: db.prepare(`
@@ -73,6 +73,8 @@ export function enqueue(job) {
     max_attempts: job.max_attempts || 5,
     round_id: job.round_id || null,
     restaurant_id: job.restaurant_id || null,
+    session_id: job.session_id ?? null,
+    job_type: job.job_type ?? null,
     created_at: now,
     updated_at: now,
   });
@@ -116,7 +118,7 @@ export function markFailed(id, error) {
 }
 
 export function listJobs(filters = {}) {
-  let sql = 'SELECT id, printer_id, usb_path, status, attempts, max_attempts, error, round_id, restaurant_id, created_at, updated_at, next_retry_at FROM print_jobs WHERE 1=1';
+  let sql = 'SELECT id, printer_id, usb_path, status, attempts, max_attempts, error, round_id, restaurant_id, session_id, job_type, created_at, updated_at, next_retry_at FROM print_jobs WHERE 1=1';
   const params = [];
 
   if (filters.status) {
@@ -197,7 +199,7 @@ export function listJobsForLogs(filters = {}) {
   const offset = Math.max(filters.offset || 0, 0);
 
   const jobs = db.prepare(
-    `SELECT id, printer_id, usb_path, status, attempts, max_attempts, error, round_id, restaurant_id, created_at, updated_at, next_retry_at
+    `SELECT id, printer_id, usb_path, status, attempts, max_attempts, error, round_id, restaurant_id, session_id, job_type, created_at, updated_at, next_retry_at
      FROM print_jobs WHERE ${where}
      ORDER BY created_at DESC
      LIMIT ? OFFSET ?`
