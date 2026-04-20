@@ -171,7 +171,7 @@ async function healthCheck(config) {
           connected: s.connected,
         })),
       }),
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(15000),
     });
   } catch (err) {
     logger.error(`Health callback failed: ${err.message}`);
@@ -188,7 +188,7 @@ async function fireStatusCallback(config, payload) {
         'Authorization': `Bearer ${config.auth_token}`,
       },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(15000),
     });
     logger.info(`Status callback sent for round ${payload.round_id}`);
   } catch (err) {
