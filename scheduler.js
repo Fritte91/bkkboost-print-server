@@ -1,6 +1,8 @@
-import { getNextReady, markPrinting, markDone, markFailed, resetInterruptedJobs, listDeadJobsForPrinter, retryJob } from './queue.js';
+import { getNextReady, markPrinting, markDone, markFailed, resetInterruptedJobs, listDeadJobsForPrinter, retryJob, getStaleQueuedForPath } from './queue.js';
 import { writeToPrinter, isPrinterConnected, getPrinterStatuses } from './printer.js';
 import logger from './logger.js';
+
+const STALE_OFFLINE_MS = 60_000;
 
 const lastConnected = new Map(); // usb_path → boolean
 let _config = null;
@@ -44,7 +46,37 @@ async function processPrinter(printer) {
   let jobId = null;
   try {
     const connected = await isPrinterConnected(printer.usb_path);
-    if (!connected) return;
+    if (!connected) {
+      // Give the printer up to STALE_OFFLINE_MS to come back (USB flap, brief
+      // power cycle). Anything older has waited long enough — fail it so the
+      // caller learns instead of the receipt being silently lost.
+      const staleJobs = getStaleQueuedForPath(printer.usb_path, STALE_OFFLINE_MS);
+      for (const job of staleJobs) {
+        const result = markFailed(job.id, 'printer_offline');
+        logger.warn(`Job ${job.id} marked ${result?.isDead ? 'dead' : 'failed'} — printer ${printer.usb_path} offline`);
+
+        // Fire callback on first failure (attempts === 1) so the staff app
+        // learns immediately the physical print didn't happen. Also fire on
+        // terminal dead. Skip intermediate attempts (2..max-1) — same job,
+        // staff already knows.
+        const shouldCallback = result?.isDead || result?.attempts === 1;
+
+        if (shouldCallback) {
+          fireStatusCallback(_config, {
+            round_id: result.round_id,
+            printer_id: result.printer_id,
+            restaurant_id: result.restaurant_id,
+            session_id: result.session_id ?? null,
+            job_type: result.job_type ?? null,
+            success: false,
+            error: result.isDead
+              ? 'Printer offline, permanently failed after max attempts'
+              : 'Printer offline — print did not occur',
+          });
+        }
+      }
+      return;
+    }
 
     const job = getNextReady(printer.usb_path);
     if (!job) return;
@@ -90,6 +122,21 @@ async function healthCheck(config) {
     let changed = false;
     for (const s of statuses) {
       const prev = lastConnected.get(s.usb_path);
+
+      // Cold-start retry: on the first tick after process boot, if a printer
+      // is connected and has dead jobs from a prior run, retry them. Without
+      // this, a Wyse reboot orphans yesterday's dead jobs until a live
+      // disconnect/reconnect cycle happens.
+      if (prev === undefined && s.connected) {
+        const deadJobs = listDeadJobsForPrinter(s.usb_path);
+        if (deadJobs.length > 0) {
+          for (const job of deadJobs) {
+            retryJob(job.id);
+          }
+          logger.info(`[printer ${s.name}] Cold-start retry: ${deadJobs.length} dead job(s) from prior run`);
+        }
+      }
+
       if (prev !== s.connected) {
         changed = true;
 

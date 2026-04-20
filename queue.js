@@ -114,6 +114,8 @@ export function markFailed(id, error) {
     round_id: job.round_id,
     printer_id: job.printer_id,
     restaurant_id: job.restaurant_id,
+    session_id: job.session_id ?? null,
+    job_type: job.job_type ?? null,
   };
 }
 
@@ -210,6 +212,17 @@ export function listJobsForLogs(filters = {}) {
 
 export function listDeadJobsForPrinter(usbPath) {
   return stmts.deadJobsForPrinter.all(usbPath);
+}
+
+export function getStaleQueuedForPath(usbPath, cutoffMs) {
+  const cutoffTimestamp = Date.now() - cutoffMs;
+  return db.prepare(`
+    SELECT id, printer_id, usb_path, round_id, restaurant_id, session_id, job_type, created_at
+    FROM print_jobs
+    WHERE usb_path = ?
+      AND status = 'queued'
+      AND created_at < ?
+  `).all(usbPath, cutoffTimestamp);
 }
 
 export function jobExists(id) {
