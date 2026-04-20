@@ -6,6 +6,7 @@ After=network.target
 Type=simple
 User=bkkboost
 WorkingDirectory=/home/bkkboost/bkkboost-print-server
+EnvironmentFile=/home/bkkboost/bkkboost-print-server/.env
 ExecStart=/usr/bin/node server.js
 Restart=always
 RestartSec=3

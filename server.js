@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { readFileSync } from 'node:fs';
 import express from 'express';
 import cors from 'cors';
@@ -8,6 +9,13 @@ import { startScheduler, updatePrinters } from './scheduler.js';
 import logger from './logger.js';
 
 const config = JSON.parse(readFileSync('config.json', 'utf-8'));
+
+config.supabase_url = process.env.SUPABASE_URL ?? '';
+config.supabase_service_key = process.env.SUPABASE_SERVICE_KEY ?? '';
+
+if (!config.supabase_url || !config.supabase_service_key) {
+  console.warn('[config] SUPABASE_URL and/or SUPABASE_SERVICE_KEY not set. Live printer sync disabled; using static printers from config.json.');
+}
 
 let printerMap = new Map(config.printers.map((p) => [p.printer_id, p]));
 

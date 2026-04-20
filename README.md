@@ -9,13 +9,25 @@ Lightweight HTTP print server for USB thermal printers. Designed to run on a Del
 git clone <your-repo-url> /home/bkkboost/bkkboost-print-server
 cd /home/bkkboost/bkkboost-print-server
 
-# Install dependencies
-npm install --production
-
-# Create and edit config
+# Bootstrap config files
 cp config.json.example config.json
-nano config.json
+cp .env.example .env
+
+# Fill in values
+nano config.json   # auth_token, restaurant_id, printer UUIDs + usb_paths
+nano .env          # SUPABASE_URL, SUPABASE_SERVICE_KEY
+
+# Install dependencies and start
+npm install --production
+npm start
 ```
+
+### Configuration split
+
+- `config.json` — non-secret config: restaurant UUID, staff app URLs, printer list, and the HTTP `auth_token` used by the staff app to reach this server. Git-ignored.
+- `.env` — secrets only: `SUPABASE_URL` and `SUPABASE_SERVICE_KEY`. Loaded into `process.env` at startup via `dotenv`, and by systemd via `EnvironmentFile=`. Git-ignored.
+
+If `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` are missing, the server logs a warning and falls back to the static `printers` list in `config.json` — live printer sync with Supabase is disabled until the env vars are set.
 
 Set your `auth_token`, `restaurant_id`, and configure each printer with its `printer_id` (matching Supabase) and `usb_path`.
 
