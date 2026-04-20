@@ -184,6 +184,10 @@ export function listJobsForLogs(filters = {}) {
     conditions.push('printer_id = ?');
     params.push(filters.printer_id);
   }
+  if (filters.job_type === 'kitchen' || filters.job_type === 'receipt') {
+    conditions.push('job_type = ?');
+    params.push(filters.job_type);
+  }
   if (filters.from) {
     conditions.push('created_at >= ?');
     params.push(filters.from);
