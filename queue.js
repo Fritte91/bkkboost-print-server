@@ -1,6 +1,6 @@
 import db from './db.js';
 
-const RETRY_DELAYS = [5_000, 30_000, 120_000, 600_000]; // ms
+const RETRY_DELAYS = [5_000, 15_000, 30_000, 60_000]; // ms
 
 // Cache prepared statements keyed by their SQL text so the dynamic WHERE
 // builders in listJobs / listJobsForLogs don't re-prepare on every request.
@@ -100,7 +100,7 @@ export function enqueue(job) {
     id: job.id,
     printer_id: job.printer_id,
     escpos_bytes: Buffer.from(job.escpos_bytes),
-    max_attempts: job.max_attempts || 5,
+    max_attempts: job.max_attempts || 10,
     round_id: job.round_id || null,
     restaurant_id: job.restaurant_id || null,
     session_id: job.session_id ?? null,
