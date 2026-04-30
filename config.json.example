@@ -5,6 +5,7 @@
   "health_callback_url": "https://dine-staff.bkkboost.com/api/print/health",
   "status_callback_url": "https://dine-staff.bkkboost.com/api/print/job/callback",
   "printers": [
-    { "printer_id": "UUID_FROM_SUPABASE", "name": "Kitchen 1", "usb_path": "/dev/usb/lp0" }
+    { "printer_id": "UUID_FROM_SUPABASE", "name": "Kitchen 1", "connection_type": "usb", "usb_device_path": "/dev/usb/lp0" },
+    { "printer_id": "UUID_FROM_SUPABASE", "name": "Kitchen 4", "connection_type": "wifi", "ip_address": "192.168.1.100", "port": 9100 }
   ]
 }

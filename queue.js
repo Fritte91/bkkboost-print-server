@@ -2,26 +2,43 @@ import db from './db.js';
 
 const RETRY_DELAYS = [5_000, 30_000, 120_000, 600_000]; // ms
 
+// Cache prepared statements keyed by their SQL text so the dynamic WHERE
+// builders in listJobs / listJobsForLogs don't re-prepare on every request.
+// The permutation count is bounded by the filter combinations (<~50).
+const stmtCache = new Map();
+function prepareCached(sql) {
+  let stmt = stmtCache.get(sql);
+  if (!stmt) {
+    stmt = db.prepare(sql);
+    stmtCache.set(sql, stmt);
+  }
+  return stmt;
+}
+
 const stmts = {
   enqueue: db.prepare(`
     INSERT OR IGNORE INTO print_jobs
-      (id, printer_id, usb_path, escpos_bytes, status, attempts, max_attempts,
+      (id, printer_id, escpos_bytes, status, attempts, max_attempts,
        round_id, restaurant_id, session_id, job_type, created_at, updated_at)
     VALUES
-      (@id, @printer_id, @usb_path, @escpos_bytes, 'queued', 0, @max_attempts,
+      (@id, @printer_id, @escpos_bytes, 'queued', 0, @max_attempts,
        @round_id, @restaurant_id, @session_id, @job_type, @created_at, @updated_at)
   `),
 
-  getNextReady: db.prepare(`
-    SELECT * FROM print_jobs
-    WHERE usb_path = ? AND status IN ('queued', 'failed')
-      AND (next_retry_at IS NULL OR next_retry_at <= ?)
-    ORDER BY created_at ASC
-    LIMIT 1
-  `),
-
-  markPrinting: db.prepare(`
-    UPDATE print_jobs SET status = 'printing', updated_at = ? WHERE id = ?
+  // Atomic claim: selects the next ready job and flips it to 'printing' in a
+  // single statement. SQLite serializes this, so two concurrent processPrinter
+  // ticks cannot both claim the same job (prevents double-prints).
+  claimNextJob: db.prepare(`
+    UPDATE print_jobs
+    SET status = 'printing', updated_at = ?
+    WHERE id = (
+      SELECT id FROM print_jobs
+      WHERE printer_id = ? AND status IN ('queued', 'failed')
+        AND (next_retry_at IS NULL OR next_retry_at <= ?)
+      ORDER BY created_at ASC
+      LIMIT 1
+    )
+    RETURNING *
   `),
 
   markDone: db.prepare(`
@@ -54,12 +71,26 @@ const stmts = {
     UPDATE print_jobs SET status = 'queued', updated_at = ? WHERE status = 'printing'
   `),
 
+  resetStalePrinting: db.prepare(`
+    UPDATE print_jobs
+    SET status = 'queued', attempts = attempts + 1, updated_at = ?
+    WHERE status = 'printing' AND updated_at < ?
+  `),
+
   countByStatus: db.prepare(`
     SELECT status, COUNT(*) as count FROM print_jobs GROUP BY status
   `),
 
   deadJobsForPrinter: db.prepare(`
-    SELECT id FROM print_jobs WHERE usb_path = ? AND status = 'dead'
+    SELECT id FROM print_jobs WHERE printer_id = ? AND status = 'dead'
+  `),
+
+  staleQueuedForPrinter: db.prepare(`
+    SELECT id, printer_id, round_id, restaurant_id, session_id, job_type, created_at
+    FROM print_jobs
+    WHERE printer_id = ?
+      AND status = 'queued'
+      AND created_at < ?
   `),
 };
 
@@ -68,7 +99,6 @@ export function enqueue(job) {
   return stmts.enqueue.run({
     id: job.id,
     printer_id: job.printer_id,
-    usb_path: job.usb_path,
     escpos_bytes: Buffer.from(job.escpos_bytes),
     max_attempts: job.max_attempts || 5,
     round_id: job.round_id || null,
@@ -80,12 +110,9 @@ export function enqueue(job) {
   });
 }
 
-export function getNextReady(usbPath) {
-  return stmts.getNextReady.get(usbPath, Date.now());
-}
-
-export function markPrinting(id) {
-  return stmts.markPrinting.run(Date.now(), id);
+export function claimNextJob(printerId) {
+  const now = Date.now();
+  return stmts.claimNextJob.get(now, printerId, now) || null;
 }
 
 export function markDone(id) {
@@ -120,7 +147,7 @@ export function markFailed(id, error) {
 }
 
 export function listJobs(filters = {}) {
-  let sql = 'SELECT id, printer_id, usb_path, status, attempts, max_attempts, error, round_id, restaurant_id, session_id, job_type, created_at, updated_at, next_retry_at FROM print_jobs WHERE 1=1';
+  let sql = 'SELECT id, printer_id, status, attempts, max_attempts, error, round_id, restaurant_id, session_id, job_type, created_at, updated_at, next_retry_at FROM print_jobs WHERE 1=1';
   const params = [];
 
   if (filters.status) {
@@ -134,7 +161,7 @@ export function listJobs(filters = {}) {
   }
 
   sql += ' ORDER BY created_at DESC';
-  return db.prepare(sql).all(...params);
+  return prepareCached(sql).all(...params);
 }
 
 export function getJob(id) {
@@ -161,6 +188,14 @@ export function cancelJob(id) {
 
 export function resetInterruptedJobs() {
   return stmts.resetPrinting.run(Date.now());
+}
+
+// Used by the sweeper: jobs stuck in 'printing' past the cutoff get re-queued
+// with attempts incremented. Protects against stuck state when markDone fails
+// mid-flight (e.g. SQLITE_BUSY, disk issue).
+export function resetStalePrintingJobs(cutoffMs) {
+  const cutoffTimestamp = Date.now() - cutoffMs;
+  return stmts.resetStalePrinting.run(Date.now(), cutoffTimestamp);
 }
 
 export function getJobCounts() {
@@ -199,13 +234,13 @@ export function listJobsForLogs(filters = {}) {
 
   const where = conditions.join(' AND ');
 
-  const total = db.prepare(`SELECT COUNT(*) as count FROM print_jobs WHERE ${where}`).get(...params).count;
+  const total = prepareCached(`SELECT COUNT(*) as count FROM print_jobs WHERE ${where}`).get(...params).count;
 
   const limit = Math.min(Math.max(filters.limit || 100, 1), 500);
   const offset = Math.max(filters.offset || 0, 0);
 
-  const jobs = db.prepare(
-    `SELECT id, printer_id, usb_path, status, attempts, max_attempts, error, round_id, restaurant_id, session_id, job_type, created_at, updated_at, next_retry_at
+  const jobs = prepareCached(
+    `SELECT id, printer_id, status, attempts, max_attempts, error, round_id, restaurant_id, session_id, job_type, created_at, updated_at, next_retry_at
      FROM print_jobs WHERE ${where}
      ORDER BY created_at DESC
      LIMIT ? OFFSET ?`
@@ -214,19 +249,13 @@ export function listJobsForLogs(filters = {}) {
   return { total, limit, offset, jobs };
 }
 
-export function listDeadJobsForPrinter(usbPath) {
-  return stmts.deadJobsForPrinter.all(usbPath);
+export function listDeadJobsForPrinter(printerId) {
+  return stmts.deadJobsForPrinter.all(printerId);
 }
 
-export function getStaleQueuedForPath(usbPath, cutoffMs) {
+export function getStaleQueuedForPrinter(printerId, cutoffMs) {
   const cutoffTimestamp = Date.now() - cutoffMs;
-  return db.prepare(`
-    SELECT id, printer_id, usb_path, round_id, restaurant_id, session_id, job_type, created_at
-    FROM print_jobs
-    WHERE usb_path = ?
-      AND status = 'queued'
-      AND created_at < ?
-  `).all(usbPath, cutoffTimestamp);
+  return stmts.staleQueuedForPrinter.all(printerId, cutoffTimestamp);
 }
 
 export function jobExists(id) {

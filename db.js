@@ -11,11 +11,22 @@ const db = new Database(path.join(DATA_DIR, 'print-server.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('busy_timeout = 5000');
 
+// Legacy schema keyed jobs on usb_path; we now key on printer_id. Jobs are
+// transient, so drop-and-recreate instead of an in-place column migration.
+const tableRow = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='print_jobs'").get();
+if (tableRow) {
+  const legacyCols = db.prepare("PRAGMA table_info(print_jobs)").all().map((c) => c.name);
+  if (legacyCols.includes('usb_path')) {
+    db.exec('DROP INDEX IF EXISTS idx_jobs_usb_path');
+    db.exec('DROP TABLE print_jobs');
+    logger.info('[db] Migrated schema: dropped legacy print_jobs (re-keyed usb_path → printer_id)');
+  }
+}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS print_jobs (
     id TEXT PRIMARY KEY,
     printer_id TEXT NOT NULL,
-    usb_path TEXT NOT NULL,
     escpos_bytes BLOB NOT NULL,
     status TEXT NOT NULL DEFAULT 'queued'
       CHECK (status IN ('queued','printing','done','failed','dead')),
@@ -24,18 +35,19 @@ db.exec(`
     error TEXT,
     round_id TEXT,
     restaurant_id TEXT,
+    session_id TEXT,
+    job_type TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     next_retry_at INTEGER
   );
 
   CREATE INDEX IF NOT EXISTS idx_jobs_status ON print_jobs(status);
-  CREATE INDEX IF NOT EXISTS idx_jobs_usb_path ON print_jobs(usb_path, status);
-  CREATE INDEX IF NOT EXISTS idx_jobs_printer_id ON print_jobs(printer_id);
+  CREATE INDEX IF NOT EXISTS idx_jobs_printer_id ON print_jobs(printer_id, status);
 `);
 
-// Conditional schema additions — safe to re-run.
-// SQLite doesn't support ALTER TABLE ... ADD COLUMN IF NOT EXISTS.
+// Defensive ALTERs — cover DBs created by an intermediate version that had
+// printer_id already but lacked job_type / session_id.
 const existingCols = db.prepare("PRAGMA table_info(print_jobs)").all().map((c) => c.name);
 
 if (!existingCols.includes('job_type')) {
