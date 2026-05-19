@@ -6,6 +6,9 @@ const STALE_OFFLINE_MS = 60_000;
 const STALE_PRINTING_MS = 120_000;
 const CALLBACK_RETRY_DELAY_MS = 3000;
 const SHUTDOWN_WAIT_MS = 5000;
+// Cap cold-start dead-job retry to recent jobs so a Wyse reboot the next
+// morning doesn't reprint yesterday's already-resolved failures.
+const COLD_START_DEAD_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 
 const lastConnected = new Map(); // printer_id → boolean
 let _config = null;
@@ -139,6 +142,8 @@ async function processPrinter(printer) {
       round_id: job.round_id,
       printer_id: job.printer_id,
       restaurant_id: job.restaurant_id,
+      session_id: job.session_id ?? null,
+      job_type: job.job_type ?? null,
       success: true,
       error: null,
     });
@@ -152,6 +157,8 @@ async function processPrinter(printer) {
           round_id: result.round_id,
           printer_id: result.printer_id,
           restaurant_id: result.restaurant_id,
+          session_id: result.session_id ?? null,
+          job_type: result.job_type ?? null,
           success: false,
           error: `Print job permanently failed after ${result.attempts} attempts`,
         });
@@ -187,7 +194,7 @@ async function healthCheck(config) {
       // this, a Wyse reboot orphans yesterday's dead jobs until a live
       // disconnect/reconnect cycle happens.
       if (prev === undefined && s.connected) {
-        const deadJobs = listDeadJobsForPrinter(s.printer_id);
+        const deadJobs = listDeadJobsForPrinter(s.printer_id, COLD_START_DEAD_MAX_AGE_MS);
         if (deadJobs.length > 0) {
           for (const job of deadJobs) {
             retryJob(job.id);

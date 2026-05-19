@@ -1,6 +1,6 @@
 import db from './db.js';
 
-const RETRY_DELAYS = [5_000, 15_000, 30_000, 60_000]; // ms
+const RETRY_DELAYS = [5_000, 30_000, 120_000, 600_000]; // ms
 
 // Cache prepared statements keyed by their SQL text so the dynamic WHERE
 // builders in listJobs / listJobsForLogs don't re-prepare on every request.
@@ -85,10 +85,6 @@ const stmts = {
     SELECT id FROM print_jobs WHERE printer_id = ? AND status = 'dead'
   `),
 
-  recentDeadJobsForPrinter: db.prepare(`
-    SELECT id FROM print_jobs WHERE printer_id = ? AND status = 'dead' AND created_at >= ?
-  `),
-
   staleQueuedForPrinter: db.prepare(`
     SELECT id, printer_id, round_id, restaurant_id, session_id, job_type, created_at
     FROM print_jobs
@@ -104,7 +100,7 @@ export function enqueue(job) {
     id: job.id,
     printer_id: job.printer_id,
     escpos_bytes: Buffer.from(job.escpos_bytes),
-    max_attempts: job.max_attempts || 10,
+    max_attempts: job.max_attempts || 5,
     round_id: job.round_id || null,
     restaurant_id: job.restaurant_id || null,
     session_id: job.session_id ?? null,
@@ -253,9 +249,8 @@ export function listJobsForLogs(filters = {}) {
   return { total, limit, offset, jobs };
 }
 
-export function listDeadJobsForPrinter(printerId, maxAgeMs) {
-  if (maxAgeMs == null) return stmts.deadJobsForPrinter.all(printerId);
-  return stmts.recentDeadJobsForPrinter.all(printerId, Date.now() - maxAgeMs);
+export function listDeadJobsForPrinter(printerId) {
+  return stmts.deadJobsForPrinter.all(printerId);
 }
 
 export function getStaleQueuedForPrinter(printerId, cutoffMs) {
