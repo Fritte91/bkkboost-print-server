@@ -312,7 +312,7 @@ app.get('/printers', async (req, res) => {
 
 // GET /logs
 app.get('/logs', (req, res) => {
-  const { status, printer_id, job_type, limit, offset, from, to } = req.query;
+  const { status, printer_id, job_type, limit, offset, from, to, q } = req.query;
 
   if (job_type !== undefined && job_type !== 'kitchen' && job_type !== 'receipt') {
     return res.status(400).json({ error: `Invalid job_type: ${job_type}. Must be 'kitchen' or 'receipt' or omitted.` });
@@ -326,6 +326,9 @@ app.get('/logs', (req, res) => {
     offset: offset ? parseInt(offset, 10) : undefined,
     from: from ? parseInt(from, 10) : undefined,
     to: to ? parseInt(to, 10) : undefined,
+    // Free-text search over job id / round_id. Capped so a pathological string
+    // cannot build an enormous LIKE pattern.
+    q: typeof q === 'string' && q.trim().length > 0 ? q.trim().slice(0, 100) : undefined,
   });
   res.json(result);
 });

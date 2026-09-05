@@ -235,6 +235,17 @@ export function listJobsForLogs(filters = {}) {
     conditions.push('created_at <= ?');
     params.push(filters.to);
   }
+  // Free-text search over the two ids the superadmin print-log UI searches by.
+  // It used to filter the fetched PAGE in the browser, so a job matching the
+  // search but sitting on page 3 simply could not be found — the one case an
+  // operator actually uses search for. Matching here also makes `total` and the
+  // pager reflect the search instead of the unfiltered set.
+  // LIKE is case-insensitive for ASCII in SQLite, and both columns are UUIDs.
+  if (filters.q) {
+    conditions.push("(id LIKE ? ESCAPE '\\' OR round_id LIKE ? ESCAPE '\\')");
+    const like = `%${String(filters.q).replace(/[%_]/g, (c) => `\\${c}`)}%`;
+    params.push(like, like);
+  }
 
   const where = conditions.join(' AND ');
 
