@@ -1,4 +1,28 @@
-# BKKBoost Print Server
+# BKKBoost Print Server — RETIRED / ARCHIVED
+
+> **RETIRED / ARCHIVED (2026-09-27). Do not deploy this for any new installation.**
+>
+> This is the old Wyse / on-prem HTTP print server: a small Node service on a Dell
+> Wyse thin client that drove USB thermal printers and was reached over a Cloudflare
+> tunnel through `restaurant_settings.print_server_url`. It is no longer part of
+> supported BkkBoost Dine. The backend routes it used (`/print/job/callback`,
+> `/print/health`, the `/staff/print-server/*` proxy and the Superadmin print logs)
+> have been removed, and the Admin and Superadmin apps can no longer configure a
+> print-server URL. No restaurant uses it.
+>
+> Supported printing today is:
+>
+> 1. **Android Print Station**: the native Android Print Engine on a dedicated
+>    device, with its own device credentials (`/print-device/*`).
+> 2. **Direct Staff-device printing**: the Staff app sends tickets straight to
+>    Wi-Fi/LAN or Bluetooth printers (`/staff/print/*`).
+>
+> See `docs/operations/printing-architecture.md` in `bkkboost-platform`.
+>
+> The code and the instructions below are kept for history only. They describe how
+> the retired system was installed and are not maintained.
+
+---
 
 Lightweight HTTP print server for USB thermal printers. Designed to run on a Dell Wyse 3040 thin client (Xubuntu, 2GB RAM, 8GB eMMC).
 
